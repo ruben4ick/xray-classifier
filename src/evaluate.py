@@ -12,7 +12,6 @@ Functions:
   plot_confusion_matrix — save confusion matrix PNG (per-model)
   plot_learning_curves  — save loss + accuracy curves PNG (per-model)
   plot_grad_cam         — save Grad-CAM overlay grid PNG (per-model)
-  plot_combined_curves  — overlay both models' curves (comparison)
   plot_roc_curves       — ROC curves for both models (comparison)
   plot_comparison_table — side-by-side metrics table image (comparison)
   grad_cam              — Grad-CAM heatmap for a single image (numpy array)
@@ -275,33 +274,6 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> No
     _save(fig, f"{name}/grad_cam.png")
 
 
-def plot_combined_curves(histories: dict[str, dict]) -> None:
-    """Overlay both models on one figure for direct comparison."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
-
-    colors = {"pretrained": "steelblue", "scratch": "coral"}
-
-    for name, h in histories.items():
-        epochs = range(1, len(h["train_loss"]) + 1)
-        c = colors[name]
-        stats = compute_val_stats(name)
-
-        ax1.plot(epochs, h["val_loss"], color=c, label=name)
-
-        smoothed = _moving_average(h["val_acc"], window=5)
-        ax2.plot(epochs, h["val_acc"], alpha=0.2, color=c)
-        ax2.plot(epochs, smoothed, color=c, linewidth=2, label=name)
-        ax2.axhline(stats["median"], ls="--", color=c, lw=0.8, alpha=0.6)
-
-    ax1.set_xlabel("Epoch"); ax1.set_ylabel("Loss")
-    ax1.set_title("Val Loss"); ax1.legend()
-    ax2.set_xlabel("Epoch"); ax2.set_ylabel("Accuracy")
-    ax2.set_ylim(0, 1.05)
-    ax2.set_title("Val Accuracy (dashed = median)"); ax2.legend()
-
-    _save(fig, "learning_curves.png")
-
-
 def plot_roc_curves(all_results: dict[str, dict]) -> None:
     """ROC curves for both models on one plot. Kept simple."""
     fig, ax = plt.subplots(figsize=(6, 5))
@@ -421,12 +393,6 @@ if __name__ == "__main__":
         all_results[name] = evaluate_model(name)
 
     # combined visualizations
-    histories = {}
-    for name in ("pretrained", "scratch"):
-        with open(CHECKPOINTS_DIR / f"{name}_history.json") as f:
-            histories[name] = json.load(f)
-
-    plot_combined_curves(histories)
     plot_roc_curves(all_results)
     plot_comparison_table(all_results)
 
