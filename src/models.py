@@ -6,6 +6,8 @@ Two ResNet18 variants:
   scratch    — random initialization, all layers trainable.
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
