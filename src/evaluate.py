@@ -108,12 +108,18 @@ def compute_val_stats(name: str) -> dict[str, float]:
     with open(path) as f:
         h = json.load(f)
     acc = np.array(h["val_acc"])
+    median = float(np.median(acc))
+    std = float(np.std(acc))
+    # Stability score: how many std above chance (0.5) the median sits.
+    # Like a Sharpe ratio — rewards high accuracy and penalizes volatility.
+    stability = (median - 0.5) / std if std > 0 else 0.0
     return {
-        "mean":   float(np.mean(acc)),
-        "median": float(np.median(acc)),
-        "std":    float(np.std(acc)),
-        "min":    float(np.min(acc)),
-        "max":    float(np.max(acc)),
+        "mean":      float(np.mean(acc)),
+        "median":    median,
+        "std":       std,
+        "stability": round(stability, 4),
+        "min":       float(np.min(acc)),
+        "max":       float(np.max(acc)),
     }
 
 
@@ -156,31 +162,26 @@ def plot_learning_curves(name: str) -> None:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
     # loss
-    ax1.plot(epochs, h["train_loss"], label="train loss")
-    ax1.plot(epochs, h["val_loss"],   label="val loss")
+    ax1.plot(epochs, h["train_loss"], label="train")
+    ax1.plot(epochs, h["val_loss"],   label="val")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Loss")
     ax1.set_title(f"Loss — {name}")
     ax1.legend()
 
-    # accuracy with summary stats
+    # accuracy: trend line + median reference
     val_acc = h["val_acc"]
     smoothed = _moving_average(val_acc, window=5)
 
-    ax2.plot(epochs, val_acc, alpha=0.35, color="steelblue", label="val acc (raw)")
-    ax2.plot(epochs, smoothed, color="steelblue", linewidth=2, label="val acc (trend)")
-    ax2.axhline(stats["mean"], ls="--", color="gray", lw=1,
-                label=f"mean: {stats['mean']:.2%}")
-    ax2.axhline(stats["median"], ls="-.", color="orange", lw=1,
-                label=f"median: {stats['median']:.2%}")
-    ax2.axhspan(stats["mean"] - stats["std"], stats["mean"] + stats["std"],
-                alpha=0.1, color="steelblue", label=f"\u00b1 1 std ({stats['std']:.2%})")
-    ax2.axhline(0.5, ls=":", color="red", lw=0.8, label="chance (50%)")
+    ax2.plot(epochs, val_acc, alpha=0.25, color="steelblue")
+    ax2.plot(epochs, smoothed, color="steelblue", linewidth=2, label="val acc")
+    ax2.axhline(stats["median"], ls="--", color="gray", lw=1,
+                label=f"median: {stats['median']:.0%}")
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Accuracy")
     ax2.set_ylim(0, 1.05)
     ax2.set_title(f"Val Accuracy — {name}")
-    ax2.legend(fontsize=7, loc="lower right")
+    ax2.legend()
 
     _save(fig, f"{name}/learning_curves.png")
 
@@ -240,31 +241,26 @@ def plot_combined_curves(histories: dict[str, dict]) -> None:
         stats = compute_val_stats(name)
 
         # loss
-        ax1.plot(epochs, h["train_loss"], color=c, linestyle="-",
-                 label=f"{name} train")
-        ax1.plot(epochs, h["val_loss"], color=c, linestyle="--",
-                 label=f"{name} val")
+        ax1.plot(epochs, h["val_loss"], color=c, label=name)
 
-        # accuracy (smoothed + mean line)
+        # accuracy — smoothed trend + median
         smoothed = _moving_average(h["val_acc"], window=5)
         ax2.plot(epochs, h["val_acc"], alpha=0.2, color=c)
         ax2.plot(epochs, smoothed, color=c, linewidth=2, label=name)
-        ax2.axhline(stats["mean"], ls="--", color=c, lw=0.8, alpha=0.6,
-                    label=f"{name} mean: {stats['mean']:.2%}")
+        ax2.axhline(stats["median"], ls="--", color=c, lw=0.8, alpha=0.6)
 
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Loss")
-    ax1.set_title("Loss Curves")
-    ax1.legend(fontsize=8)
+    ax1.set_title("Val Loss")
+    ax1.legend()
 
-    ax2.axhline(0.5, ls=":", color="red", lw=0.8, label="chance (50%)")
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Accuracy")
     ax2.set_ylim(0, 1.05)
-    ax2.set_title("Val Accuracy")
-    ax2.legend(fontsize=7)
+    ax2.set_title("Val Accuracy (dashed = median)")
+    ax2.legend()
 
-    _save(fig, "learning_curves.png")
+    _save(fig, "comparison/learning_curves.png")
 
 
 def plot_roc_curves(all_results: dict[str, dict]) -> None:
@@ -281,7 +277,7 @@ def plot_roc_curves(all_results: dict[str, dict]) -> None:
     ax.set_ylabel("True Positive Rate")
     ax.set_title("ROC Curve")
     ax.legend(title="AUC")
-    _save(fig, "roc_curve.png")
+    _save(fig, "comparison/roc_curve.png")
 
 
 def plot_comparison_table(all_results: dict[str, dict]) -> None:
@@ -300,13 +296,10 @@ def plot_comparison_table(all_results: dict[str, dict]) -> None:
     # val accuracy summary stats
     for name_label, stat_key in [("Val Acc (mean)", "mean"),
                                   ("Val Acc (median)", "median"),
-                                  ("Val Acc (std)", "std")]:
+                                  ("Stability", "stability")]:
         p = all_results["pretrained"]["val_stats"][stat_key]
         s = all_results["scratch"]["val_stats"][stat_key]
-        if stat_key == "std":
-            winner = "—"  # std alone doesn't indicate better/worse
-        else:
-            winner = "Pretrained" if p > s else "Scratch" if s > p else "Tie"
+        winner = "Pretrained" if p > s else "Scratch" if s > p else "Tie"
         rows.append([name_label, f"{p:.4f}", f"{s:.4f}", winner])
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -329,7 +322,7 @@ def plot_comparison_table(all_results: dict[str, dict]) -> None:
             cell.set_facecolor("#f8d7da")
 
     ax.set_title("Model Comparison — Test Set", fontsize=13, pad=20)
-    _save(fig, "comparison_table.png")
+    _save(fig, "comparison/metrics_table.png")
 
 
 # ── Grad-CAM ──────────────────────────────────────────────────────────
@@ -451,7 +444,7 @@ if __name__ == "__main__":
         s = all_results["scratch"]["metrics"][metric]
         print(f"{metric:12s}  {p:>12.4f}  {s:>10.4f}")
     print()
-    for stat in ("mean", "median", "std"):
+    for stat in ("mean", "median", "std", "stability"):
         p = all_results["pretrained"]["val_stats"][stat]
         s = all_results["scratch"]["val_stats"][stat]
-        print(f"val_acc_{stat:6s}  {p:>12.4f}  {s:>10.4f}")
+        print(f"val_{stat:10s}  {p:>12.4f}  {s:>10.4f}")
