@@ -1,22 +1,31 @@
 """
 Evaluation, metrics, and visualization for the xray-classifier experiment.
 
+Per-model outputs go to outputs/<model_name>/.
+Combined comparison plots go to outputs/.
+
 Functions:
   load_model            — restore model from best checkpoint
   get_predictions       — run inference, collect y_true / y_pred / y_prob
   compute_metrics       — accuracy, precision, recall, F1 (macro), AUC-ROC
-  plot_confusion_matrix — save confusion matrix PNG
-  plot_learning_curves  — save loss + accuracy curves PNG from saved history
+  compute_val_stats     — mean, median, std, stability of val accuracy
+  plot_confusion_matrix — save confusion matrix PNG (per-model)
+  plot_learning_curves  — save loss + accuracy curves PNG (per-model)
+  plot_grad_cam         — save Grad-CAM overlay grid PNG (per-model)
+  plot_roc_curves       — ROC curves for both models (comparison)
+  plot_comparison_table — side-by-side metrics table image (comparison)
   grad_cam              — Grad-CAM heatmap for a single image (numpy array)
-  plot_grad_cam         — save Grad-CAM overlay grid PNG
   evaluate_model        — full pipeline for one model variant
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,6 +34,7 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
     roc_auc_score,
+    roc_curve,
 )
 
 from src.data import RAW_DIR, eval_transform, get_loaders
@@ -37,6 +47,15 @@ OUTPUTS_DIR = ROOT / "outputs"
 CLASSES = ["NORMAL", "PNEUMONIA"]
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406])
 IMAGENET_STD  = torch.tensor([0.229, 0.224, 0.225])
+
+sns.set_style("whitegrid")
+
+
+def _model_dir(name: str) -> Path:
+    """Return outputs/<name>/, creating it if needed."""
+    d = OUTPUTS_DIR / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 # model loading
@@ -89,31 +108,64 @@ def compute_metrics(
     }
 
 
+def compute_val_stats(name: str) -> dict[str, float]:
+    """Compute summary statistics for val accuracy across all epochs.
+
+    Returns mean, median, std, min, max — more honest than reporting
+    only the best epoch (which on a 16-image val set can be a fluke).
+    """
+    path = CHECKPOINTS_DIR / f"{name}_history.json"
+    with open(path) as f:
+        h = json.load(f)
+    acc = np.array(h["val_acc"])
+    median = float(np.median(acc))
+    std = float(np.std(acc))
+    # Stability score: how many std above chance (0.5) the median sits.
+    # Like a Sharpe ratio — rewards high accuracy and penalizes volatility.
+    stability = (median - 0.5) / std if std > 0 else 0.0
+    return {
+        "mean":      float(np.mean(acc)),
+        "median":    median,
+        "std":       std,
+        "stability": round(stability, 4),
+        "min":       float(np.min(acc)),
+        "max":       float(np.max(acc)),
+    }
+
+
+def _moving_average(values: list[float], window: int = 5) -> np.ndarray:
+    """Simple moving average for smoothing noisy curves."""
+    arr = np.array(values)
+    if len(arr) < window:
+        return arr
+    kernel = np.ones(window) / window
+    smoothed = np.convolve(arr, kernel, mode="same")
+    half = window // 2
+    smoothed[:half] = arr[:half]
+    smoothed[-half:] = arr[-half:]
+    return smoothed
+
+
 # plots
 def plot_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, name: str
 ) -> None:
     cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    im = ax.imshow(cm, cmap="Blues")
-    fig.colorbar(im, ax=ax)
-    ax.set_xticks([0, 1]); ax.set_xticklabels(CLASSES)
-    ax.set_yticks([0, 1]); ax.set_yticklabels(CLASSES)
-    ax.set_xlabel("Predicted"); ax.set_ylabel("True")
-    ax.set_title(f"Confusion Matrix — {name}")
-    threshold = cm.max() / 2
-    for i in range(2):
-        for j in range(2):
-            ax.text(j, i, cm[i, j], ha="center", va="center",
-                    color="white" if cm[i, j] > threshold else "black")
-    _save(fig, f"{name}_confusion_matrix.png")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=CLASSES, yticklabels=CLASSES, ax=ax)
+    ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
+    ax.set_title(f"Confusion Matrix — {name} (Test Set, n={len(y_true)})")
+    _save(fig, f"{name}/confusion_matrix.png")
 
 
 def plot_learning_curves(name: str) -> None:
+    """Per-model learning curves with moving-average trend and summary stats."""
     history_path = CHECKPOINTS_DIR / f"{name}_history.json"
     with open(history_path) as f:
         h = json.load(f)
 
+    stats = compute_val_stats(name)
     epochs = range(1, len(h["train_loss"]) + 1)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
@@ -122,14 +174,17 @@ def plot_learning_curves(name: str) -> None:
     ax1.set_xlabel("Epoch"); ax1.set_ylabel("Loss")
     ax1.set_title(f"Loss — {name}"); ax1.legend()
 
-    best_acc = max(h["val_acc"])
-    ax2.plot(epochs, h["val_acc"])
-    ax2.axhline(best_acc, ls="--", color="gray", lw=0.8,
-                label=f"best: {best_acc:.4f}")
+    val_acc = h["val_acc"]
+    smoothed = _moving_average(val_acc, window=5)
+    ax2.plot(epochs, val_acc, alpha=0.25, color="steelblue")
+    ax2.plot(epochs, smoothed, color="steelblue", linewidth=2, label="val acc")
+    ax2.axhline(stats["median"], ls="--", color="gray", lw=1,
+                label=f"median: {stats['median']:.0%}")
     ax2.set_xlabel("Epoch"); ax2.set_ylabel("Accuracy")
+    ax2.set_ylim(0, 1.05)
     ax2.set_title(f"Val Accuracy — {name}"); ax2.legend()
 
-    _save(fig, f"{name}_learning_curves.png")
+    _save(fig, f"{name}/learning_curves.png")
 
 
 # Grad-CAM
@@ -175,8 +230,8 @@ def grad_cam(
     return (cam / cam.max()) if cam.max() > 0 else cam
 
 
-def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 4) -> None:
-    """Save a grid of original + Grad-CAM overlay images from the test set."""
+def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> None:
+    """Save a grid: top row = original X-rays, bottom row = Grad-CAM overlay."""
     from torchvision.datasets import ImageFolder
 
     dataset = ImageFolder(str(RAW_DIR / "test"), transform=eval_transform)
@@ -194,7 +249,10 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 4) -> No
     for col, idx in enumerate(indices):
         img_tensor, label = dataset[idx]
         inp = img_tensor.unsqueeze(0).to(device)
-        cam = grad_cam(model, inp, target_class=label)
+
+        pred = model(inp).argmax(dim=1).item()
+        prob = F.softmax(model(inp), dim=1).max().item()
+        cam_map = grad_cam(model, inp, target_class=label)
 
         img_display = (
             (img_tensor * IMAGENET_STD[:, None, None] + IMAGENET_MEAN[:, None, None])
@@ -204,65 +262,151 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 4) -> No
         )
 
         axes[0, col].imshow(img_display)
-        axes[0, col].set_title(CLASSES[label], fontsize=9)
+        axes[0, col].set_title(f"True: {CLASSES[label]}", fontsize=8)
         axes[0, col].axis("off")
 
         axes[1, col].imshow(img_display)
-        axes[1, col].imshow(cam, cmap="jet", alpha=0.45)
-        axes[1, col].set_title("Grad-CAM", fontsize=9)
+        axes[1, col].imshow(cam_map, cmap="jet", alpha=0.45)
+        axes[1, col].set_title(f"Pred: {CLASSES[pred]} ({prob:.0%})", fontsize=8)
         axes[1, col].axis("off")
 
     fig.suptitle(f"Grad-CAM — {name}", fontsize=13)
-    _save(fig, f"{name}_grad_cam.png")
+    _save(fig, f"{name}/grad_cam.png")
+
+
+def plot_roc_curves(all_results: dict[str, dict]) -> None:
+    """ROC curves for both models on one plot. Kept simple."""
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    for name, res in all_results.items():
+        fpr, tpr, _ = roc_curve(res["y_true"], res["y_prob"])
+        auc = res["metrics"]["auc_roc"]
+        ax.plot(fpr, tpr, label=f"{name} ({auc:.3f})")
+
+    ax.plot([0, 1], [0, 1], ls="--", color="gray", lw=0.8)
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve")
+    ax.legend(title="AUC")
+    _save(fig, "roc_curve.png")
+
+
+def plot_comparison_table(all_results: dict[str, dict]) -> None:
+    """Render a side-by-side metrics table as an image, using robust stats."""
+    # test set metrics
+    metrics_order = ["accuracy", "precision", "recall", "f1", "auc_roc"]
+    labels = ["Accuracy", "Precision", "Recall", "F1 (macro)", "AUC-ROC"]
+
+    rows = []
+    for label, key in zip(labels, metrics_order):
+        p = all_results["pretrained"]["metrics"][key]
+        s = all_results["scratch"]["metrics"][key]
+        winner = "Pretrained" if p > s else "Scratch" if s > p else "Tie"
+        rows.append([label, f"{p:.4f}", f"{s:.4f}", winner])
+
+    # val accuracy summary stats
+    for name_label, stat_key in [("Val Acc (mean)", "mean"),
+                                  ("Val Acc (median)", "median"),
+                                  ("Stability", "stability")]:
+        p = all_results["pretrained"]["val_stats"][stat_key]
+        s = all_results["scratch"]["val_stats"][stat_key]
+        winner = "Pretrained" if p > s else "Scratch" if s > p else "Tie"
+        rows.append([name_label, f"{p:.4f}", f"{s:.4f}", winner])
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.axis("off")
+    table = ax.table(
+        cellText=rows,
+        colLabels=["Metric", "Pretrained", "Scratch", "Winner"],
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1, 1.5)
+
+    for i, row in enumerate(rows):
+        cell = table[i + 1, 3]
+        if row[3] == "Pretrained":
+            cell.set_facecolor("#d4edda")
+        elif row[3] == "Scratch":
+            cell.set_facecolor("#f8d7da")
+
+    ax.set_title("Model Comparison — Test Set", fontsize=13, pad=20)
+    _save(fig, "metrics_table.png")
 
 
 # full pipeline
-
-def evaluate_model(name: str) -> dict[str, float]:
-    """Run full evaluation for one model variant. Returns test metrics dict."""
+def evaluate_model(name: str) -> dict:
+    """Run full evaluation for one model variant. Returns results dict."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    model_dir = _model_dir(name)
 
     model   = load_model(name, device)
     loaders = get_loaders()
     y_true, y_pred, y_prob = get_predictions(model, loaders["test"], device)
 
     metrics = compute_metrics(y_true, y_pred, y_prob)
+    val_stats = compute_val_stats(name)
+
     print(f"\n[{name}] test metrics:")
     for k, v in metrics.items():
         print(f"  {k:12s}: {v:.4f}")
+    print(f"  val accuracy — mean: {val_stats['mean']:.4f}  "
+          f"median: {val_stats['median']:.4f}  "
+          f"std: {val_stats['std']:.4f}  "
+          f"range: [{val_stats['min']:.4f}, {val_stats['max']:.4f}]")
 
     plot_confusion_matrix(y_true, y_pred, name)
     plot_learning_curves(name)
     plot_grad_cam(model, name, device)
 
-    metrics_path = OUTPUTS_DIR / f"{name}_metrics.json"
+    # save per-model metrics
+    out = {k: round(v, 6) for k, v in metrics.items()}
+    out["val_stats"] = {k: round(v, 6) for k, v in val_stats.items()}
+    metrics_path = model_dir / "metrics.json"
     with open(metrics_path, "w") as f:
-        json.dump({k: round(v, 6) for k, v in metrics.items()}, f, indent=2)
+        json.dump(out, f, indent=2)
     print(f"[eval] saved {metrics_path}")
 
-    return metrics
+    return {
+        "metrics": metrics,
+        "val_stats": val_stats,
+        "y_true": y_true,
+        "y_pred": y_pred,
+        "y_prob": y_prob,
+    }
 
 
 def _save(fig: plt.Figure, filename: str) -> None:
     path = OUTPUTS_DIR / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"[eval] saved {path}")
 
 
 if __name__ == "__main__":
-    results = {}
+    all_results = {}
     for name in ("pretrained", "scratch"):
-        results[name] = evaluate_model(name)
+        all_results[name] = evaluate_model(name)
 
-    # side-by-side comparison table
+    # combined visualizations
+    plot_roc_curves(all_results)
+    plot_comparison_table(all_results)
+
+    # side-by-side console output
     print("\n=== Side-by-side comparison ===")
     header = f"{'metric':12s}  {'pretrained':>12s}  {'scratch':>10s}"
     print(header)
     print("-" * len(header))
-    for metric in results["pretrained"]:
-        p = results["pretrained"][metric]
-        s = results["scratch"][metric]
+    for metric in all_results["pretrained"]["metrics"]:
+        p = all_results["pretrained"]["metrics"][metric]
+        s = all_results["scratch"]["metrics"][metric]
         print(f"{metric:12s}  {p:>12.4f}  {s:>10.4f}")
+    print()
+    for stat in ("mean", "median", "std", "stability"):
+        p = all_results["pretrained"]["val_stats"][stat]
+        s = all_results["scratch"]["val_stats"][stat]
+        print(f"val_{stat:10s}  {p:>12.4f}  {s:>10.4f}")
