@@ -2,7 +2,21 @@
 Evaluation, metrics, and visualization for the xray-classifier experiment.
 
 Per-model outputs go to outputs/<model_name>/.
-Combined comparison plots go to outputs/.
+Combined comparison plots go to outputs/comparison/.
+
+Functions:
+  load_model            — restore model from best checkpoint
+  get_predictions       — run inference, collect y_true / y_pred / y_prob
+  compute_metrics       — accuracy, precision, recall, F1 (macro), AUC-ROC
+  compute_val_stats     — mean, median, std, stability of val accuracy
+  plot_confusion_matrix — save confusion matrix PNG (per-model)
+  plot_learning_curves  — save loss + accuracy curves PNG (per-model)
+  plot_grad_cam         — save Grad-CAM overlay grid PNG (per-model)
+  plot_combined_curves  — overlay both models' curves (comparison)
+  plot_roc_curves       — ROC curves for both models (comparison)
+  plot_comparison_table — side-by-side metrics table image (comparison)
+  grad_cam              — Grad-CAM heatmap for a single image (numpy array)
+  evaluate_model        — full pipeline for one model variant
 """
 
 from __future__ import annotations
@@ -45,8 +59,7 @@ def _model_dir(name: str) -> Path:
     return d
 
 
-# ── model loading ──────────────────────────────────────────────────────
-
+# model loading
 def load_model(name: str, device: torch.device | str = "cpu") -> nn.Module:
     """Load model architecture and restore best-checkpoint weights."""
     ckpt = CHECKPOINTS_DIR / f"{name}_best.pt"
@@ -58,8 +71,7 @@ def load_model(name: str, device: torch.device | str = "cpu") -> nn.Module:
     return model
 
 
-# ── inference ──────────────────────────────────────────────────────────
-
+# inference
 @torch.no_grad()
 def get_predictions(
     model: nn.Module, loader, device
@@ -80,8 +92,7 @@ def get_predictions(
     return np.array(y_true_list), np.array(y_pred_list), np.array(y_prob_list)
 
 
-# ── metrics ────────────────────────────────────────────────────────────
-
+# metrics
 def compute_metrics(
     y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray
 ) -> dict[str, float]:
@@ -136,8 +147,7 @@ def _moving_average(values: list[float], window: int = 5) -> np.ndarray:
     return smoothed
 
 
-# ── per-model plots (saved to outputs/<name>/) ────────────────────────
-
+# plots
 def plot_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, name: str
 ) -> None:
@@ -145,8 +155,7 @@ def plot_confusion_matrix(
     fig, ax = plt.subplots(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
                 xticklabels=CLASSES, yticklabels=CLASSES, ax=ax)
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
+    ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
     ax.set_title(f"Confusion Matrix — {name} (Test Set, n={len(y_true)})")
     _save(fig, f"{name}/confusion_matrix.png")
 
@@ -161,29 +170,65 @@ def plot_learning_curves(name: str) -> None:
     epochs = range(1, len(h["train_loss"]) + 1)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-    # loss
     ax1.plot(epochs, h["train_loss"], label="train")
     ax1.plot(epochs, h["val_loss"],   label="val")
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.set_title(f"Loss — {name}")
-    ax1.legend()
+    ax1.set_xlabel("Epoch"); ax1.set_ylabel("Loss")
+    ax1.set_title(f"Loss — {name}"); ax1.legend()
 
-    # accuracy: trend line + median reference
     val_acc = h["val_acc"]
     smoothed = _moving_average(val_acc, window=5)
-
     ax2.plot(epochs, val_acc, alpha=0.25, color="steelblue")
     ax2.plot(epochs, smoothed, color="steelblue", linewidth=2, label="val acc")
     ax2.axhline(stats["median"], ls="--", color="gray", lw=1,
                 label=f"median: {stats['median']:.0%}")
-    ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("Accuracy")
+    ax2.set_xlabel("Epoch"); ax2.set_ylabel("Accuracy")
     ax2.set_ylim(0, 1.05)
-    ax2.set_title(f"Val Accuracy — {name}")
-    ax2.legend()
+    ax2.set_title(f"Val Accuracy — {name}"); ax2.legend()
 
     _save(fig, f"{name}/learning_curves.png")
+
+
+# Grad-CAM
+def grad_cam(
+    model: nn.Module,
+    image_tensor: torch.Tensor,  # (1, 3, 224, 224), on model device
+    target_class: int,
+) -> np.ndarray:
+    """Return a (224, 224) Grad-CAM heatmap, values in [0, 1]."""
+    saved: list = []  # will hold the layer4 output tensor
+
+    def fwd_hook(_, __, output):
+        # retain_grad() keeps the gradient on this non-leaf tensor after
+        # backward(), even when backbone parameters are frozen.
+        saved.append(output)
+        output.retain_grad()
+
+    h_fwd = model.layer4.register_forward_hook(fwd_hook)
+
+    model.eval()
+    model.zero_grad()
+    with torch.enable_grad():
+        inp = image_tensor.clone().requires_grad_(True)
+        logits = model(inp)
+        logits[0, target_class].backward()
+
+    h_fwd.remove()
+
+    act_t = saved[0]
+    act  = act_t.detach().squeeze(0)  # (512, 7, 7)
+    grad = act_t.grad.squeeze(0)       # (512, 7, 7)
+    weights = grad.mean(dim=(1, 2))    # (512,)
+
+    cam = F.relu((weights[:, None, None] * act).sum(dim=0))  # (7, 7)
+
+    cam = F.interpolate(
+        cam.unsqueeze(0).unsqueeze(0),
+        size=(224, 224),
+        mode="bilinear",
+        align_corners=False,
+    ).squeeze().cpu().numpy()
+
+    return (cam / cam.max()) if cam.max() > 0 else cam
 
 
 def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> None:
@@ -192,6 +237,7 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> No
 
     dataset = ImageFolder(str(RAW_DIR / "test"), transform=eval_transform)
 
+    # pick n_samples // NUM_CLASSES examples per class
     per_class = n_samples // NUM_CLASSES
     indices = []
     for cls_idx in range(NUM_CLASSES):
@@ -211,7 +257,9 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> No
 
         img_display = (
             (img_tensor * IMAGENET_STD[:, None, None] + IMAGENET_MEAN[:, None, None])
-            .permute(1, 2, 0).numpy().clip(0, 1)
+            .permute(1, 2, 0)
+            .numpy()
+            .clip(0, 1)
         )
 
         axes[0, col].imshow(img_display)
@@ -226,8 +274,6 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> No
     fig.suptitle(f"Grad-CAM — {name}", fontsize=13)
     _save(fig, f"{name}/gradcam.png")
 
-
-# ── combined plots (saved to outputs/) ────────────────────────────────
 
 def plot_combined_curves(histories: dict[str, dict]) -> None:
     """Overlay both models on one figure for direct comparison."""
@@ -325,49 +371,7 @@ def plot_comparison_table(all_results: dict[str, dict]) -> None:
     _save(fig, "comparison/metrics_table.png")
 
 
-# ── Grad-CAM ──────────────────────────────────────────────────────────
-
-def grad_cam(
-    model: nn.Module,
-    image_tensor: torch.Tensor,  # (1, 3, 224, 224)
-    target_class: int,
-) -> np.ndarray:
-    """Return a (224, 224) Grad-CAM heatmap, values in [0, 1]."""
-    saved: list = []
-
-    def fwd_hook(_, __, output):
-        saved.append(output)
-        output.retain_grad()
-
-    h_fwd = model.layer4.register_forward_hook(fwd_hook)
-
-    model.eval()
-    model.zero_grad()
-    with torch.enable_grad():
-        inp = image_tensor.clone().requires_grad_(True)
-        logits = model(inp)
-        logits[0, target_class].backward()
-
-    h_fwd.remove()
-
-    act_t = saved[0]
-    act  = act_t.detach().squeeze(0)   # (512, 7, 7)
-    grad = act_t.grad.squeeze(0)        # (512, 7, 7)
-    weights = grad.mean(dim=(1, 2))     # (512,)
-
-    cam = F.relu((weights[:, None, None] * act).sum(dim=0))  # (7, 7)
-    cam = F.interpolate(
-        cam.unsqueeze(0).unsqueeze(0),
-        size=(224, 224),
-        mode="bilinear",
-        align_corners=False,
-    ).squeeze().cpu().numpy()
-
-    return (cam / cam.max()) if cam.max() > 0 else cam
-
-
-# ── full pipeline ──────────────────────────────────────────────────────
-
+# full pipeline
 def evaluate_model(name: str) -> dict:
     """Run full evaluation for one model variant. Returns results dict."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -391,7 +395,6 @@ def evaluate_model(name: str) -> dict:
     plot_confusion_matrix(y_true, y_pred, name)
     plot_learning_curves(name)
     plot_grad_cam(model, name, device)
-
 
     # save per-model metrics
     out = {k: round(v, 6) for k, v in metrics.items()}
