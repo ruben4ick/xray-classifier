@@ -1,15 +1,15 @@
 {
-  "accuracy": 0.804487,
-  "precision": 0.794697,
-  "recall": 0.782051,
-  "f1": 0.787169,
-  "auc_roc": 0.866952,
+  "accuracy": 0.822115,
+  "precision": 0.823347,
+  "recall": 0.844872,
+  "f1": 0.819508,
+  "auc_roc": 0.934451,
   "val_stats": {
-    "mean": 0.68125,
+    "mean": 0.729167,
     "median": 0.75,
-    "std": 0.155916,
-    "stability": 1.6034,
-    "min": 0.3125,
-    "max": 0.875
+    "std": 0.12112,
+    "stability": 2.0641,
+    "min": 0.5,
+    "max": 0.9375
   }
 }
