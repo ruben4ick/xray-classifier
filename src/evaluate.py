@@ -272,7 +272,7 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 6) -> No
         axes[1, col].axis("off")
 
     fig.suptitle(f"Grad-CAM — {name}", fontsize=13)
-    _save(fig, f"{name}/gradcam.png")
+    _save(fig, f"{name}/grad_cam.png")
 
 
 def plot_combined_curves(histories: dict[str, dict]) -> None:
