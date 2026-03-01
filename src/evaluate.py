@@ -39,8 +39,7 @@ IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406])
 IMAGENET_STD  = torch.tensor([0.229, 0.224, 0.225])
 
 
-# ── model loading ─────────────────────────────────────────────────────────────
-
+# model loading
 def load_model(name: str, device: torch.device | str = "cpu") -> nn.Module:
     """Load model architecture and restore best-checkpoint weights."""
     ckpt = CHECKPOINTS_DIR / f"{name}_best.pt"
@@ -52,8 +51,7 @@ def load_model(name: str, device: torch.device | str = "cpu") -> nn.Module:
     return model
 
 
-# ── inference ─────────────────────────────────────────────────────────────────
-
+# inference
 @torch.no_grad()
 def get_predictions(
     model: nn.Module, loader, device
@@ -74,8 +72,7 @@ def get_predictions(
     return np.array(y_true_list), np.array(y_pred_list), np.array(y_prob_list)
 
 
-# ── metrics ───────────────────────────────────────────────────────────────────
-
+# metrics
 def compute_metrics(
     y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray
 ) -> dict[str, float]:
@@ -92,8 +89,7 @@ def compute_metrics(
     }
 
 
-# ── plots ─────────────────────────────────────────────────────────────────────
-
+# plots
 def plot_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, name: str
 ) -> None:
@@ -136,8 +132,7 @@ def plot_learning_curves(name: str) -> None:
     _save(fig, f"{name}_learning_curves.png")
 
 
-# ── Grad-CAM ──────────────────────────────────────────────────────────────────
-
+# Grad-CAM
 def grad_cam(
     model: nn.Module,
     image_tensor: torch.Tensor,  # (1, 3, 224, 224), on model device
@@ -170,7 +165,6 @@ def grad_cam(
 
     cam = F.relu((weights[:, None, None] * act).sum(dim=0))  # (7, 7)
 
-    # upsample to input resolution
     cam = F.interpolate(
         cam.unsqueeze(0).unsqueeze(0),
         size=(224, 224),
@@ -202,7 +196,6 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 4) -> No
         inp = img_tensor.unsqueeze(0).to(device)
         cam = grad_cam(model, inp, target_class=label)
 
-        # denormalize for display
         img_display = (
             (img_tensor * IMAGENET_STD[:, None, None] + IMAGENET_MEAN[:, None, None])
             .permute(1, 2, 0)
@@ -223,7 +216,7 @@ def plot_grad_cam(model: nn.Module, name: str, device, n_samples: int = 4) -> No
     _save(fig, f"{name}_grad_cam.png")
 
 
-# ── full pipeline ─────────────────────────────────────────────────────────────
+# full pipeline
 
 def evaluate_model(name: str) -> dict[str, float]:
     """Run full evaluation for one model variant. Returns test metrics dict."""
@@ -251,8 +244,6 @@ def evaluate_model(name: str) -> dict[str, float]:
     return metrics
 
 
-# ── internal helper ───────────────────────────────────────────────────────────
-
 def _save(fig: plt.Figure, filename: str) -> None:
     path = OUTPUTS_DIR / filename
     fig.tight_layout()
@@ -260,8 +251,6 @@ def _save(fig: plt.Figure, filename: str) -> None:
     plt.close(fig)
     print(f"[eval] saved {path}")
 
-
-# ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     results = {}
