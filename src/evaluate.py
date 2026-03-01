@@ -2,7 +2,7 @@
 Evaluation, metrics, and visualization for the xray-classifier experiment.
 
 Per-model outputs go to outputs/<model_name>/.
-Combined comparison plots go to outputs/comparison/.
+Combined comparison plots go to outputs/.
 
 Functions:
   load_model            — restore model from best checkpoint
@@ -286,27 +286,20 @@ def plot_combined_curves(histories: dict[str, dict]) -> None:
         c = colors[name]
         stats = compute_val_stats(name)
 
-        # loss
         ax1.plot(epochs, h["val_loss"], color=c, label=name)
 
-        # accuracy — smoothed trend + median
         smoothed = _moving_average(h["val_acc"], window=5)
         ax2.plot(epochs, h["val_acc"], alpha=0.2, color=c)
         ax2.plot(epochs, smoothed, color=c, linewidth=2, label=name)
         ax2.axhline(stats["median"], ls="--", color=c, lw=0.8, alpha=0.6)
 
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.set_title("Val Loss")
-    ax1.legend()
-
-    ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("Accuracy")
+    ax1.set_xlabel("Epoch"); ax1.set_ylabel("Loss")
+    ax1.set_title("Val Loss"); ax1.legend()
+    ax2.set_xlabel("Epoch"); ax2.set_ylabel("Accuracy")
     ax2.set_ylim(0, 1.05)
-    ax2.set_title("Val Accuracy (dashed = median)")
-    ax2.legend()
+    ax2.set_title("Val Accuracy (dashed = median)"); ax2.legend()
 
-    _save(fig, "comparison/learning_curves.png")
+    _save(fig, "learning_curves.png")
 
 
 def plot_roc_curves(all_results: dict[str, dict]) -> None:
@@ -323,7 +316,7 @@ def plot_roc_curves(all_results: dict[str, dict]) -> None:
     ax.set_ylabel("True Positive Rate")
     ax.set_title("ROC Curve")
     ax.legend(title="AUC")
-    _save(fig, "comparison/roc_curve.png")
+    _save(fig, "roc_curve.png")
 
 
 def plot_comparison_table(all_results: dict[str, dict]) -> None:
@@ -368,7 +361,7 @@ def plot_comparison_table(all_results: dict[str, dict]) -> None:
             cell.set_facecolor("#f8d7da")
 
     ax.set_title("Model Comparison — Test Set", fontsize=13, pad=20)
-    _save(fig, "comparison/metrics_table.png")
+    _save(fig, "metrics_table.png")
 
 
 # full pipeline
