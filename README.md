@@ -50,11 +50,11 @@ Combined metrics (from your provided comparison figure):
 
 ### Transfer Learning (Pretrained)
 
-![Pretrained learning curves](outputs/pretrained_learning_curves.png)
+![Pretrained learning curves](outputs/pretrained/learning_curves.png)
 
 ### From Scratch
 
-![Scratch learning curves](outputs/scratch_learning_curves.png)
+![Scratch learning curves](outputs/scratch/learning_curves.png)
 
 **Reading the curves:**
 
@@ -67,7 +67,7 @@ Combined metrics (from your provided comparison figure):
 
 |                            Transfer Learning                            |                           From Scratch                            |
 | :---------------------------------------------------------------------: | :---------------------------------------------------------------: |
-| ![Pretrained confusion matrix](outputs/pretrained_confusion_matrix.png) | ![Scratch confusion matrix](outputs/scratch_confusion_matrix.png) |
+| ![Pretrained confusion matrix](outputs/pretrained/confusion_matrix.png) | ![Scratch confusion matrix](outputs/scratch/confusion_matrix.png) |
 
 **Medical context:** The bottom-left cell (False Negative) represents missed pneumonia — the most dangerous error. A low FN count in the pretrained matrix is the primary clinical signal.
 
@@ -77,11 +77,11 @@ Combined metrics (from your provided comparison figure):
 
 ### Transfer Learning
 
-![Pretrained Grad-CAM](outputs/pretrained_grad_cam.png)
+![Pretrained Grad-CAM](outputs/pretrained/grad_cam.png)
 
 ### From Scratch
 
-![Scratch Grad-CAM](outputs/scratch_grad_cam.png)
+![Scratch Grad-CAM](outputs/scratch/grad_cam.png)
 
 **Interpretation:**
 
@@ -140,7 +140,7 @@ python -m src.train   # trains pretrained + scratch, saves checkpoints/
 ### 5. Evaluate & generate plots
 
 ```bash
-python -m src.evaluate  # saves outputs/*.png + outputs/pretrained_metrics.json + outputs/scratch_metrics.json
+python -m src.evaluate  # saves outputs/* + outputs/pretrained/metrics.json + outputs/scratch/metrics.json
 ```
 
 ### 6. Open the report notebook
@@ -168,7 +168,7 @@ xray-classifier/
 │   ├── raw/                # [git-ignored] full Kaggle dataset
 │   └── scarce/             # [git-ignored] 50-image stratified subset
 ├── checkpoints/            # [git-ignored] best model weights + history JSON
-└── outputs/                # plots + per-model metrics JSON files
+└── outputs/                # shared plots + pretrained/ and scratch/ artifacts
 ```
 
 ---
