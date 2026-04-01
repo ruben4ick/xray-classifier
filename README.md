@@ -19,15 +19,30 @@ A controlled experiment on chest X-ray classification under extreme data scarcit
 
 ## Key Results
 
-| Metric         | Pretrained | From Scratch |  Δ  |
-| -------------- | :--------: | :----------: | :-: |
-| **Accuracy**   |     —      |      —       |  —  |
-| **F1 (macro)** |     —      |      —       |  —  |
-| **AUC-ROC**    |     —      |      —       |  —  |
-| **Precision**  |     —      |      —       |  —  |
-| **Recall**     |     —      |      —       |  —  |
+Combined metrics (from your provided comparison figure):
 
-> Run `notebook.ipynb` end-to-end to populate this table with live experiment results.
+| Metric               | Pretrained | From Scratch |    Δ    | Winner     |
+| -------------------- | :--------: | :----------: | :-----: | ---------- |
+| **Accuracy**         |   0.8221   |    0.6619    | +0.1602 | Pretrained |
+| **Precision**        |   0.8233   |    0.6565    | +0.1668 | Pretrained |
+| **Recall**           |   0.8449   |    0.5722    | +0.2727 | Pretrained |
+| **F1 (macro)**       |   0.8195   |    0.5482    | +0.2713 | Pretrained |
+| **AUC-ROC**          |   0.9345   |    0.6786    | +0.2559 | Pretrained |
+| **Val Acc (mean)**   |   0.7292   |    0.5479    | +0.1813 | Pretrained |
+| **Val Acc (median)** |   0.7500   |    0.5625    | +0.1875 | Pretrained |
+| **Stability**        |   2.0641   |    0.8960    | +1.1681 | Pretrained |
+
+---
+
+## Dataset Exploration Outputs
+
+### Class Distribution
+
+![Class distribution](outputs/class_distribution.png)
+
+### Augmented Samples
+
+![Augmented samples](outputs/augmented_samples.png)
 
 ---
 
@@ -125,7 +140,7 @@ python -m src.train   # trains pretrained + scratch, saves checkpoints/
 ### 5. Evaluate & generate plots
 
 ```bash
-python -m src.evaluate  # saves outputs/*.png + outputs/metrics.json
+python -m src.evaluate  # saves outputs/*.png + outputs/pretrained_metrics.json + outputs/scratch_metrics.json
 ```
 
 ### 6. Open the report notebook
@@ -134,7 +149,7 @@ python -m src.evaluate  # saves outputs/*.png + outputs/metrics.json
 jupyter notebook notebook.ipynb
 ```
 
-Run all cells top-to-bottom (`Kernel → Restart & Run All`). All plots are loaded from `outputs/`; metrics are loaded from `outputs/metrics.json`.
+Run all cells top-to-bottom (`Kernel → Restart & Run All`). All plots are loaded from `outputs/`; metrics are computed from model predictions in the notebook.
 
 ---
 
@@ -153,7 +168,7 @@ xray-classifier/
 │   ├── raw/                # [git-ignored] full Kaggle dataset
 │   └── scarce/             # [git-ignored] 50-image stratified subset
 ├── checkpoints/            # [git-ignored] best model weights + history JSON
-└── outputs/                # plots + metrics.json (committed for README embeds)
+└── outputs/                # plots + per-model metrics JSON files
 ```
 
 ---
